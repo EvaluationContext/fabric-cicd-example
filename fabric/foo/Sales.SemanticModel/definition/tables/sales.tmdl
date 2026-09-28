@@ -1,0 +1,44 @@
+table sales
+	lineageTag: a1000000-0000-4000-8000-00000000000b
+	sourceLineageTag: [dbo].[sales]
+
+	measure 'Total Amount' = SUM ( sales[amount] )
+		formatString: #,0.00
+		lineageTag: a1000000-0000-4000-8000-00000000000c
+
+	column order_id
+		dataType: int64
+		formatString: 0
+		lineageTag: a1000000-0000-4000-8000-00000000000d
+		sourceLineageTag: order_id
+		summarizeBy: none
+		sourceColumn: order_id
+
+		annotation SummarizationSetBy = User
+
+	column region
+		dataType: string
+		lineageTag: a1000000-0000-4000-8000-00000000000e
+		sourceLineageTag: region
+		summarizeBy: none
+		sourceColumn: region
+
+		annotation SummarizationSetBy = Automatic
+
+	column amount
+		dataType: double
+		formatString: #,0.00
+		lineageTag: a1000000-0000-4000-8000-00000000000f
+		sourceLineageTag: amount
+		summarizeBy: sum
+		sourceColumn: amount
+
+		annotation SummarizationSetBy = Automatic
+
+	partition sales = entity
+		mode: directLake
+		source
+			entityName: sales
+			schemaName: dbo
+			expressionSource: DatabaseQuery
+

@@ -1,0 +1,63 @@
+# Reusable steps: install the Fabric CLI and log in as the SPN.
+#
+# Every pipeline starts with these steps, so auth lives in exactly one place.
+# Workload identity federation: the AzureCLI@2 task with a WIF service
+# connection and `addSpnToEnvironment: true` exposes servicePrincipalId,
+# idToken and tenantId, and `fab auth login --federated-token` consumes the
+# OIDC assertion directly. No secret is stored in Azure DevOps at all.
+#
+# fab caches its token under the agent's home directory, so later plain
+# `script:` steps in the same job are authenticated without re-running the task.
+#
+# Docs: https://microsoft.github.io/fabric-cli/examples/auth_examples/
+
+parameters:
+  - name: serviceConnection
+    displayName: WIF service connection name
+    type: string
+
+  - name: pythonVersion
+    displayName: Python version for the agent
+    type: string
+    default: '3.12'
+
+steps:
+  - task: UsePythonVersion@0
+    displayName: Use Python ${{ parameters.pythonVersion }}
+    inputs:
+      versionSpec: ${{ parameters.pythonVersion }}
+
+  # Nothing is pinned: every run installs the current ms-fabric-cli, which
+  # brings the current fabric-cicd with it. A deploy can therefore change
+  # behaviour with no commit behind it, so the versions are echoed into the
+  # log and a breakage can be tied to a release. A pin is one line here if
+  # that trade-off flips. The series is written against fabric-cicd 1.3.0.
+  - script: |
+      set -euo pipefail
+      python -m pip install --upgrade pip
+      python -m pip install ms-fabric-cli
+      echo "== versions =="
+      python -m pip show ms-fabric-cli fabric-cicd | grep -E '^(Name|Version):'
+    displayName: Install Fabric CLI (current)
+
+  # Hosted agents have no keyring, so fab can't encrypt its token cache and
+  # will otherwise fail to persist the login between steps.
+  - script: |
+      set -euo pipefail
+      fab config set encryption_fallback_enabled true
+    displayName: fab config (hosted-agent token cache)
+
+  - task: AzureCLI@2
+    displayName: fab auth login (workload identity)
+    inputs:
+      azureSubscription: ${{ parameters.serviceConnection }}
+      scriptType: bash
+      scriptLocation: inlineScript
+      addSpnToEnvironment: true   # exposes servicePrincipalId / idToken / tenantId
+      inlineScript: |
+        set -euo pipefail
+        fab auth login \
+          -u "$servicePrincipalId" \
+          --federated-token "$idToken" \
+          --tenant "$tenantId"
+        fab auth status

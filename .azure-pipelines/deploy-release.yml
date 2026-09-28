@@ -1,0 +1,93 @@
+# release/* → TEST → PROD
+#
+# Promotion is driven by cutting a release/* branch from main, not by a tag.
+# The active release branch IS current production; cutting a new one supersedes
+# it. A hotfix lands on main first and is cherry-picked into the active release
+# branch, which re-runs this pipeline.
+#
+#   push to release/*  → TEST  (automatic: the exact commit prod will get, then
+#                               a prod plan as the stage's last job)
+#                      → PROD  (manual approval on `fabric-prod`, then deploy)
+#
+# No path filter here, on purpose. A release branch cut carries no new commits
+# of its own, and a `paths:` filter could leave it never triggering.
+#
+# ROLLBACK is the same mechanism in reverse: re-run this pipeline on the
+# previous release/* branch, or cherry-pick the fix forward. Data does not roll
+# back.
+#
+# Azure DevOps evaluates an environment's checks when the STAGE that uses it
+# starts, not the job. Anything in the Prod stage runs only after the approval,
+# so the plan is the last job of the Test stage: it runs after the test deploy
+# and before the approval prompt, and the approver reads it rather than a
+# commit hash.
+#
+# Prerequisites in Azure DevOps:
+#   1. Service connections in variables.yml (workload identity).
+#   2. Environments `fabric-test` and `fabric-prod`. `fabric-prod` MUST carry a
+#      manual-approval check; the pipeline does not approve itself.
+#   3. The test and prod workspaces, named by `core.workspace.<env>` in
+#      fabric/foo/config.yml, with the SPN as Contributor. Nothing here creates
+#      a workspace.
+
+trigger:
+  branches:
+    include:
+      - release/*
+
+pr: none
+
+variables:
+  - template: variables.yml
+
+stages:
+  # ---------------------------------------------------------------------------
+  # TEST: every push to a release branch
+  # ---------------------------------------------------------------------------
+  - stage: Test
+    displayName: Deploy to Test
+    jobs:
+      - deployment: DeployTest
+        displayName: fab deploy (test)
+        pool:
+          vmImage: ubuntu-latest
+        environment: fabric-test
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+
+                - template: templates/fab-setup-steps.yml
+                  parameters:
+                    serviceConnection: ${{ variables.serviceConnectionDev }}
+
+                - template: templates/fab-deploy-steps.yml
+                  parameters:
+                    targetEnv: test
+
+  # ---------------------------------------------------------------------------
+  # PROD: approve, deploy
+  # ---------------------------------------------------------------------------
+  - stage: Prod
+    displayName: Deploy to Prod
+    dependsOn: Test
+    jobs:
+      - deployment: DeployProd
+        displayName: fab deploy (prod)
+        pool:
+          vmImage: ubuntu-latest
+        environment: fabric-prod   # the manual-approval check lives here
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+
+                - template: templates/fab-setup-steps.yml
+                  parameters:
+                    serviceConnection: ${{ variables.serviceConnectionProd }}
+
+                - template: templates/fab-deploy-steps.yml
+                  parameters:
+                    targetEnv: prod

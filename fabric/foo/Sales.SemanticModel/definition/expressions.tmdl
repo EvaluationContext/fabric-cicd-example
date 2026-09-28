@@ -1,0 +1,13 @@
+/// Direct Lake on SQL over the Sales lakehouse's SQL analytics endpoint.
+/// Both arguments are literals for the DEV workspace and neither autobinds:
+/// parameter.yml rewrites the host with $items.Lakehouse.Sales.$sqlendpoint
+/// and the id with $items.Lakehouse.Sales.$sqlendpointid on the way in.
+expression DatabaseQuery =
+		let
+		    database = Sql.Database("fazr2kwaq6cu7eggbo3jwhcjpa-7oaosicotrlujkdbexkllwo7ce.datawarehouse.fabric.microsoft.com", "4f4ccee2-90a5-4efe-9c1a-d5f80ad37fc8")
+		in
+		    database
+	lineageTag: a1000000-0000-4000-8000-00000000000a
+
+	annotation PBI_IncludeFutureArtifacts = False
+

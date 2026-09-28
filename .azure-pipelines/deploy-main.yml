@@ -1,0 +1,58 @@
+# main → DEV
+#
+# Every merge to main that touches fabric/foo/ publishes the dev workspace.
+# Prod is deploy-release.yml (release/* → test → plan → approval → prod).
+#
+# The path filter is deliberate: an edit to this file or its templates does not
+# trigger a run, so a broken pipeline edit surfaces on the next content change.
+# Add `.azure-pipelines/` to `paths` to change that, at the cost of a dev deploy
+# per pipeline tweak.
+#
+# Dev stays git-connected to main so feature branch-outs relate to it, but this
+# deploy is the only thing that publishes it: git sync never fires parameter.yml.
+#
+# Prerequisites in Fabric: the dev workspace, named by `core.workspace.dev` in
+# fabric/foo/config.yml, with the SPN as Contributor. Nothing here creates a
+# workspace; a missing one fails the deploy naming it.
+#
+# Prerequisites in Azure DevOps: the workload-identity service connection in
+# variables.yml and the `fabric-dev` environment (created on first run, no check).
+
+trigger:
+  # Two merges a minute apart must not publish dev concurrently. The second
+  # waits and runs once for everything queued behind the first.
+  batch: true
+  branches:
+    include:
+      - main
+  paths:
+    include:
+      - fabric/foo/
+
+pr: none
+
+variables:
+  - template: variables.yml
+
+stages:
+  - stage: Dev
+    displayName: Deploy to Dev
+    jobs:
+      - deployment: DeployDev
+        displayName: fab deploy (dev)
+        pool:
+          vmImage: ubuntu-latest
+        environment: fabric-dev
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+
+                - template: templates/fab-setup-steps.yml
+                  parameters:
+                    serviceConnection: ${{ variables.serviceConnectionDev }}
+
+                - template: templates/fab-deploy-steps.yml
+                  parameters:
+                    targetEnv: dev

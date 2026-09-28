@@ -1,0 +1,56 @@
+# Env-specific rewrites applied by fab deploy (fabric-cicd) at publish time.
+# Env keys must match config.yml. `_ALL_` applies to every environment and
+# must be the only key when used.
+# Docs: https://microsoft.github.io/fabric-cicd/1.3.0/how_to/parameterization/
+#
+# Only what fabric-cicd cannot bind on its own is here. Before it publishes a
+# definition file it does two rewrites of its own, no rule needed:
+#
+#   1. Every logicalId from an item's .platform found in any file is replaced
+#      with that item's id in the target workspace. Items are published in
+#      dependency order (Lakehouse before Notebook before DataPipeline), so the
+#      referenced item always exists first.
+#   2. `workspaceId`, `default_lakehouse_workspace_id` and `workspace` values
+#      equal to 00000000-0000-0000-0000-000000000000 are replaced with the
+#      target workspace id. A real guid in those fields is left alone.
+#
+# That is exactly how Fabric Git integration writes same-workspace references
+# (https://learn.microsoft.com/fabric/cicd/cross-workspace-dependency-binding),
+# so the repo stores them that way:
+#
+#   Notebook → Lakehouse       default_lakehouse / known_lakehouses = Sales.Lakehouse logicalId,
+#                              default_lakehouse_workspace_id = zero guid
+#   Pipeline → Notebook        notebookId = Load Sales.Notebook logicalId, workspaceId = zero guid
+#   Report   → Semantic model  definition.pbir byPath; fabric-cicd converts it to byConnection
+#
+# One reference has no logicalId to bind through and stays as rules below:
+# the semantic model's Direct Lake SQL endpoint host and id.
+#
+# Both rules are `is_regex` with exactly one capture group, anchored on the
+# STRUCTURE around the value rather than on the committed value, so a
+# re-commit from a feature workspace can never stale a find_value. Only the
+# captured group is replaced. A malformed pattern rejects the whole file.
+
+find_replace:
+
+  # ---- Semantic model → Lakehouse SQL analytics endpoint ---------------------
+  # Direct Lake on SQL: Sql.Database("<endpoint host>", "<endpoint id>").
+  # The SQL endpoint is not an item in the repo, so there is no logicalId to
+  # bind through; both values are carried as literals in expressions.tmdl.
+  # Two disjoint matches, so neither rule depends on the other having run.
+
+  - find_value: 'Sql\.Database\("([^"]+)",'
+    is_regex: "true"
+    replace_value:
+      _ALL_: "$items.Lakehouse.Sales.$sqlendpoint"
+    item_type: "SemanticModel"
+    item_name: "Sales"
+    file_path: "/Sales.SemanticModel/definition/expressions.tmdl"
+
+  - find_value: 'Sql\.Database\("[^"]+",\s*"([0-9a-fA-F-]{36})"\)'
+    is_regex: "true"
+    replace_value:
+      _ALL_: "$items.Lakehouse.Sales.$sqlendpointid"
+    item_type: "SemanticModel"
+    item_name: "Sales"
+    file_path: "/Sales.SemanticModel/definition/expressions.tmdl"

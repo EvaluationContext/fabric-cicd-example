@@ -1,0 +1,40 @@
+# fab deploy config: env → workspace, item scope, publish rules.
+# Env keys (dev / test / prod) must match parameter.yml and the pipelines.
+#
+# Workspaces are NAMED here and never recorded by id. They are infrastructure,
+# made once outside the pipelines under exactly these names; a deploy fails
+# naming a missing one.
+#
+# Schema: https://microsoft.github.io/fabric-cicd/1.3.0/how_to/config_deployment/
+
+core:
+  workspace:
+    dev: foo-dev
+    test: foo-test
+    prod: foo-prod
+
+  repository_directory: "."
+
+  # https://microsoft.github.io/fabric-cicd/1.3.0/#supported-item-types
+  # Anything not listed is ignored on publish AND on unpublish.
+  item_types_in_scope:
+    - Lakehouse
+    - Notebook
+    - DataPipeline
+    - SemanticModel
+    - Report
+
+  # 1.x ignores parameter.yml unless it is named here.
+  parameter: "parameter.yml"
+
+publish:
+  skip:
+    dev: false     # merge to main deploys dev
+    test: false    # release/* deploys test before prod
+    prod: false
+
+unpublish:
+  skip:
+    dev: false     # dev mirrors main: orphaned items are removed
+    test: false
+    prod: false    # prod deletes on rollback too

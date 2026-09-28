@@ -1,0 +1,58 @@
+# Reusable steps: fab deploy one environment and publish the log.
+#
+# Assumes the calling job already ran templates/fab-setup-steps.yml (Fabric CLI
+# installed and authenticated).
+#
+# THE WORKSPACE MUST ALREADY EXIST. It is named in config.yml
+# `core.workspace.<env>` and is infrastructure, made outside the pipeline.
+# A missing one fails the deploy naming it, before any publish.
+#
+# The full log is published as a build artifact, so "what changed since
+# yesterday?" is answered from the run: items published, parameter
+# substitutions applied, orphans removed.
+#
+# fab deploy: https://microsoft.github.io/fabric-cli/commands/fs/deploy/
+
+parameters:
+  - name: targetEnv
+    displayName: Target environment key in config.yml (dev / test / prod)
+    type: string
+
+  - name: configFile
+    displayName: Path to the fabric-cicd config.yml
+    type: string
+    default: fabric/foo/config.yml
+
+steps:
+  - script: |
+      set -euo pipefail
+      config="${{ parameters.configFile }}"
+      env="${{ parameters.targetEnv }}"
+      if [ ! -f "$config" ]; then
+        echo "##vso[task.logissue type=error]Config file '$config' does not exist."
+        exit 1
+      fi
+
+      mkdir -p "$(Build.ArtifactStagingDirectory)/deploy-log"
+      log="$(Build.ArtifactStagingDirectory)/deploy-log/${env}-$(Build.BuildId).log"
+      echo "##vso[task.setvariable variable=fabDeployLogWritten]true"
+
+      {
+        echo "fab deploy --config $config --target_env $env --force"
+        echo "commit:  $(Build.SourceVersion)"
+        echo "branch:  $(Build.SourceBranch)"
+        echo "run:     $(Build.BuildNumber)"
+        echo "=================================================================="
+      } | tee "$log"
+
+      # pipefail is on, so a failing deploy still fails the step despite tee.
+      # --force: no interactive confirmation on an agent.
+      fab deploy --config "$config" --target_env "$env" --force 2>&1 | tee -a "$log"
+    displayName: fab deploy (${{ parameters.targetEnv }})
+
+  # Published whenever the deploy step wrote a log, on failure too, which is
+  # when it matters.
+  - publish: $(Build.ArtifactStagingDirectory)/deploy-log
+    artifact: deploy-log-${{ parameters.targetEnv }}
+    displayName: Publish deployment log (${{ parameters.targetEnv }})
+    condition: eq(variables['fabDeployLogWritten'], 'true')

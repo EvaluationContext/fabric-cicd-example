@@ -1,0 +1,21 @@
+# Power BI Project (PBIP) / Fabric
+
+# Local cache and settings written by Power BI Desktop / Fabric editors
+.pbi/
+**/.pbi/
+*.pbip.cache
+
+# Report/model local state (not part of the source definition)
+**/.pbi/localSettings.json
+**/.pbi/cache.abf
+**/*.Report/.pbi/
+**/*.SemanticModel/.pbi/
+
+# Compiled / packaged Power BI files
+*.pbix
+*.pbit
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+.vscode/

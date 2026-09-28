@@ -1,0 +1,11 @@
+# The names Azure DevOps knows. The only values to edit to run these pipelines.
+# Environment names (`environment: fabric-dev` ...) are not here: each appears
+# once, on the stage that owns it.
+variables:
+  # deploy-main.yml and the Test stage of deploy-release.yml.
+  # Contributor on the dev and test workspaces.
+  serviceConnectionDev: sc-fabric-deploy-nonprod
+
+  # The Prod stage of deploy-release.yml only. Contributor on prod.
+  # The same connection today; the split is this line.
+  serviceConnectionProd: sc-fabric-deploy-prod
