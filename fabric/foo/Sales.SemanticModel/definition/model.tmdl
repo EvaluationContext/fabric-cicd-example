@@ -14,5 +14,3 @@ annotation PBI_ProTooling = ["DevMode"]
 
 ref table sales
 
-ref cultureInfo en-GB
-

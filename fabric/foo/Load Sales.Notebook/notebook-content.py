@@ -8,12 +8,12 @@
 # META   },
 # META   "dependencies": {
 # META     "lakehouse": {
-# META       "default_lakehouse": "a1000000-0000-4000-8000-000000000001",
+# META       "default_lakehouse": "a77c7000-9e05-47f1-85a5-4db985d45676",
 # META       "default_lakehouse_name": "Sales",
-# META       "default_lakehouse_workspace_id": "00000000-0000-0000-0000-000000000000",
+# META       "default_lakehouse_workspace_id": "5cc9c02d-5413-4ef5-857f-e8111338c908",
 # META       "known_lakehouses": [
 # META         {
-# META           "id": "a1000000-0000-4000-8000-000000000001"
+# META           "id": "a77c7000-9e05-47f1-85a5-4db985d45676"
 # META         }
 # META       ]
 # META     }
@@ -23,8 +23,7 @@
 # MARKDOWN ********************
 
 # # Load Sales
-#
-# Writes a small `sales` table into the default lakehouse so the semantic model
+# # Writes a small `sales` table into the default lakehouse so the semantic model
 # has something to read. Deterministic, so a re-run is a no-op in effect.
 
 # CELL ********************

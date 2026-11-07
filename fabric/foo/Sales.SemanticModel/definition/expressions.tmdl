@@ -4,7 +4,7 @@
 /// and the id with $items.Lakehouse.Sales.$sqlendpointid on the way in.
 expression DatabaseQuery =
 		let
-		    database = Sql.Database("fazr2kwaq6cu7eggbo3jwhcjpa-7oaosicotrlujkdbexkllwo7ce.datawarehouse.fabric.microsoft.com", "4f4ccee2-90a5-4efe-9c1a-d5f80ad37fc8")
+		    database = Sql.Database("fazr2kwaq6cu7eggbo3jwhcjpa-fxamsxatkt2u5bl75airgogjba.datawarehouse.fabric.microsoft.com", "db350be1-b962-4567-b875-229eb67d1582")
 		in
 		    database
 	lineageTag: a1000000-0000-4000-8000-00000000000a
