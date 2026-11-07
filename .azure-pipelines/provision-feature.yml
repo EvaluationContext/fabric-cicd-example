@@ -70,11 +70,11 @@ jobs:
       - script: |
           set -euo pipefail
           ws="$(workspace)"
-          if wsId=$(fab get "/$ws.Workspace" -q id 2>/dev/null | tr -d '"'); then
+          if wsId=$(fab get "/$ws.Workspace" -q id 2>/dev/null | tr -cd '0-9a-fA-F-'); then
             echo "exists:  $ws ($wsId)"
           else
             fab mkdir "/$ws.Workspace" -P capacityName="$(featureCapacity)"
-            wsId=$(fab get "/$ws.Workspace" -q id | tr -d '"')
+            wsId=$(fab get "/$ws.Workspace" -q id | tr -cd '0-9a-fA-F-')
             echo "created: $ws ($wsId)"
           fi
           echo "##vso[task.setvariable variable=workspaceId]$wsId"
@@ -165,7 +165,9 @@ jobs:
           set -euo pipefail
           wsId="$(workspaceId)"
           dev=$(python -c "import yaml; print(yaml.safe_load(open('fabric/foo/config.yml'))['core']['workspace']['dev'])")
-          devId=$(fab get "/$dev.Workspace" -q id | tr -d '"')
+          # Keep only the GUID: fab output can carry a stray control character, which
+          # is invalid inside the JSON body below.
+          devId=$(fab get "/$dev.Workspace" -q id | tr -cd '0-9a-fA-F-')
           if fab api -X post "workspaces/$wsId/git/workspaceRelations" \
                -i "{\"relatedWorkspaceId\": \"$devId\", \"relationType\": \"Base\"}"; then
             echo "related: $(workspace) → $dev"
