@@ -78,4 +78,4 @@ Or merge to `main` and let `deploy-main.yml` do it.
 | Tag | Post | State |
 | --- | ---- | ----- |
 | `post-1` | Groundwork | One workspace, three environments, pipelines, two parameter rules |
-| `post-2` | Feature Workspaces | A workspace per feature branch, binding deploy, git integration, teardown on merge, one new measure |
+| `post-2` | Feature Workspaces | A workspace per feature branch, binding deploy, git integration, teardown on merge, a notebook comment as the change |
