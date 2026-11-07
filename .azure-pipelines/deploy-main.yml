@@ -1,4 +1,4 @@
-# main → DEV
+# main → DEV, then teardown
 #
 # Every merge to main that touches fabric/foo/ publishes the dev workspace.
 # Prod is deploy-release.yml (release/* → test → plan → approval → prod).
@@ -8,8 +8,17 @@
 # Add `.azure-pipelines/` to `paths` to change that, at the cost of a dev deploy
 # per pipeline tweak.
 #
-# Dev stays git-connected to main so feature branch-outs relate to it, but this
-# deploy is the only thing that publishes it: git sync never fires parameter.yml.
+# Dev is git-connected to main for one reason: the Fabric UI lists feature
+# workspaces under the workspace they are related to, and the relation API
+# needs both connected to the same repo root. This deploy is the only thing
+# that publishes dev. NEVER update dev from git or commit from it: main holds
+# the last feature workspace's ids in the places autobinding doesn't cover,
+# and only a deploy rewrites them on the way in.
+#
+# The Teardown stage deletes feature workspaces whose branch is gone, and only
+# this repo's: the name carries the repo slug, and the workspace's git connection
+# must name this repo and a branch the remote no longer has. Completing a pull
+# request deletes the source branch by default; leave that on.
 #
 # Prerequisites in Fabric: the dev workspace, named by `core.workspace.dev` in
 # fabric/foo/config.yml, with the SPN as Contributor. Nothing here creates a
@@ -56,3 +65,48 @@ stages:
                 - template: templates/fab-deploy-steps.yml
                   parameters:
                     targetEnv: dev
+
+  - stage: Teardown
+    displayName: Teardown feature workspaces
+    dependsOn: Dev
+    jobs:
+      - job: TeardownFeatureWorkspaces
+        displayName: Delete workspaces for merged branches
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - checkout: self
+            persistCredentials: true   # git ls-remote against the repo
+
+          - template: templates/fab-setup-steps.yml
+            parameters:
+              serviceConnection: ${{ variables.serviceConnectionDev }}
+
+          - script: |
+              set -euo pipefail
+              slug() { printf '%s' "$1" | tr 'A-Z' 'a-z' | tr -cs 'a-z0-9' '-' | sed 's/^-//; s/-$//'; }
+              prefix="foo-feature-$(slug "$BUILD_REPOSITORY_NAME")-"
+
+              # Only workspaces the SPN holds a role on come back, which is
+              # why provisioning kept it Admin. Delete is Admin-only too.
+              # The name prefix is the cheap filter: this repo's feature workspaces.
+              fab api workspaces |
+                jq -r --arg p "$prefix" '.text.value[]
+                  | select(.displayName | startswith($p)) | .id' |
+              while read -r wsId; do
+                # The git connection is the exact check: the repo and branch the
+                # workspace is really connected to. Two repos with overlapping
+                # slugs can share a prefix, but not a repository name.
+                conn=$(fab api "workspaces/$wsId/git/connection")
+                repo=$(jq -r '.text.gitProviderDetails.repositoryName // empty' <<<"$conn")
+                branch=$(jq -r '.text.gitProviderDetails.branchName // empty' <<<"$conn")
+                if [ "$repo" != "$BUILD_REPOSITORY_NAME" ] || [ -z "$branch" ]; then
+                  echo "keep:   $wsId (not connected to $BUILD_REPOSITORY_NAME)"
+                elif git ls-remote --exit-code --heads origin "$branch" >/dev/null; then
+                  echo "keep:   $wsId ($branch still exists)"
+                else
+                  echo "delete: $wsId ($branch is gone)"
+                  fab api -X delete "workspaces/$wsId"
+                fi
+              done
+            displayName: Teardown

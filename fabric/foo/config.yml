@@ -1,9 +1,16 @@
 # fab deploy config: env → workspace, item scope, publish rules.
-# Env keys (dev / test / prod) must match parameter.yml and the pipelines.
+# Env keys (feature / dev / test / prod) must match parameter.yml and the
+# pipelines.
 #
 # Workspaces are NAMED here and never recorded by id. They are infrastructure,
 # made once outside the pipelines under exactly these names; a deploy fails
 # naming a missing one.
+#
+# `feature` is the one environment with no workspace here: its name comes from
+# the branch (foo-feature-<repo slug>-<branch slug>), and provision-feature.yml passes it
+# as a config override for that one run. It still gets the publish and
+# unpublish entries below, and any per-environment replace_value in
+# parameter.yml needs a `feature` key or the rule silently skips.
 #
 # Schema: https://microsoft.github.io/fabric-cicd/1.3.0/how_to/config_deployment/
 
@@ -29,12 +36,14 @@ core:
 
 publish:
   skip:
+    feature: false # the binding deploy, once, from provision-feature.yml
     dev: false     # merge to main deploys dev
     test: false    # release/* deploys test before prod
     prod: false
 
 unpublish:
   skip:
+    feature: true  # never delete what a developer hasn't committed yet
     dev: false     # dev mirrors main: orphaned items are removed
     test: false
     prod: false    # prod deletes on rollback too

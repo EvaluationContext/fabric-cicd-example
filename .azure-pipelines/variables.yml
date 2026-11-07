@@ -1,11 +1,22 @@
-# The names Azure DevOps knows. The only values to edit to run these pipelines.
-# Environment names (`environment: fabric-dev` ...) are not here: each appears
-# once, on the stage that owns it.
+# The names Azure DevOps and Fabric know. The only values to edit to run these
+# pipelines. Environment names (`environment: fabric-dev` ...) are not here:
+# each appears once, on the stage that owns it.
 variables:
-  # deploy-main.yml and the Test stage of deploy-release.yml.
-  # Contributor on the dev and test workspaces.
+  # deploy-main.yml, provision-feature.yml and the Test stage of
+  # deploy-release.yml. Contributor on the dev and test workspaces, Admin on
+  # every feature workspace (it creates them).
   serviceConnectionDev: sc-fabric-deploy-nonprod
 
   # The Prod stage of deploy-release.yml only. Contributor on prod.
   # The same connection today; the split is this line.
   serviceConnectionProd: sc-fabric-deploy-prod
+
+  # provision-feature.yml. The capacity feature workspaces are created on, by
+  # display name. The non-prod SPN needs Contributor permissions on it
+  # (Capacity settings → Contributor permissions in the admin portal).
+  featureCapacity: evaluationcontext
+
+  # provision-feature.yml. The Fabric connection holding the non-prod SPN's
+  # Azure DevOps credential, by display name. Made once with fab mkdir, see
+  # README. Feature workspaces are connected to their branch through it.
+  gitConnection: con-fabric-git-nonprod

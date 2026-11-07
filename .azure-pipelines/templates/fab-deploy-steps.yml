@@ -7,6 +7,13 @@
 # `core.workspace.<env>` and is infrastructure, made outside the pipeline.
 # A missing one fails the deploy naming it, before any publish.
 #
+# The one exception is a feature workspace, which config.yml cannot name
+# because the name comes from the branch. provision-feature.yml creates it,
+# then passes its name in `configOverride`, which fabric-cicd merges over
+# config.yml for that run only (`fab deploy -P config_override=...`). An
+# override can add an environment to `core.workspace` because the field
+# already exists in the file; it cannot add a field that isn't there.
+#
 # The full log is published as a build artifact, so "what changed since
 # yesterday?" is answered from the run: items published, parameter
 # substitutions applied, orphans removed.
@@ -15,7 +22,7 @@
 
 parameters:
   - name: targetEnv
-    displayName: Target environment key in config.yml (dev / test / prod)
+    displayName: Target environment key in config.yml (feature / dev / test / prod)
     type: string
 
   - name: configFile
@@ -23,22 +30,30 @@ parameters:
     type: string
     default: fabric/foo/config.yml
 
+  - name: configOverride
+    displayName: JSON merged over config.yml for this run (empty for none)
+    type: string
+    default: ''
+
 steps:
   - script: |
       set -euo pipefail
       config="${{ parameters.configFile }}"
       env="${{ parameters.targetEnv }}"
+      override='${{ parameters.configOverride }}'
       if [ ! -f "$config" ]; then
         echo "##vso[task.logissue type=error]Config file '$config' does not exist."
         exit 1
       fi
+      args=()
+      [ -n "$override" ] && args=(-P "config_override=$override")
 
       mkdir -p "$(Build.ArtifactStagingDirectory)/deploy-log"
       log="$(Build.ArtifactStagingDirectory)/deploy-log/${env}-$(Build.BuildId).log"
       echo "##vso[task.setvariable variable=fabDeployLogWritten]true"
 
       {
-        echo "fab deploy --config $config --target_env $env --force"
+        echo "fab deploy --config $config --target_env $env --force ${args[*]:-}"
         echo "commit:  $(Build.SourceVersion)"
         echo "branch:  $(Build.SourceBranch)"
         echo "run:     $(Build.BuildNumber)"
@@ -47,7 +62,7 @@ steps:
 
       # pipefail is on, so a failing deploy still fails the step despite tee.
       # --force: no interactive confirmation on an agent.
-      fab deploy --config "$config" --target_env "$env" --force 2>&1 | tee -a "$log"
+      fab deploy --config "$config" --target_env "$env" --force "${args[@]}" 2>&1 | tee -a "$log"
     displayName: fab deploy (${{ parameters.targetEnv }})
 
   # Published whenever the deploy step wrote a log, on failure too, which is

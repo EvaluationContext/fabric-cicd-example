@@ -27,9 +27,16 @@
 # the semantic model's Direct Lake SQL endpoint host and id.
 #
 # Both rules are `is_regex` with exactly one capture group, anchored on the
-# STRUCTURE around the value rather than on the committed value, so a
-# re-commit from a feature workspace can never stale a find_value. Only the
-# captured group is replaced. A malformed pattern rejects the whole file.
+# STRUCTURE around the value rather than on the committed value. The literals
+# in expressions.tmdl change on every feature branch: the binding deploy
+# commits the feature workspace's endpoint back to the branch, and the merge
+# carries it to main. A find_value matched on dev's literal would stop
+# matching after the first merge; anchored on Sql.Database(...) it matches
+# whatever the last commit left there. Only the captured group is replaced.
+# A malformed pattern rejects the whole file.
+#
+# `_ALL_` covers the feature environment too. A rule with a per-environment
+# replace_value needs a `feature` key, or it skips the file with a warning.
 
 find_replace:
 

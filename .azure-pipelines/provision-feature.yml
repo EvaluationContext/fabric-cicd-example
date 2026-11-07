@@ -1,0 +1,175 @@
+# feature/* → a feature workspace
+#
+# Queued by hand on the feature branch: Run pipeline → Branch/tag → run. Once
+# per branch. Azure DevOps has no branch-creation trigger, and a push trigger
+# would run a binding deploy over the workspace on every push, publishing the
+# branch over whatever is uncommitted in the workspace. One queue, one
+# workspace.
+#
+# What a run does, as sp-fabric-deploy-nonprod:
+#   1. Create foo-feature-<repo slug>-<branch slug> on the feature capacity and grant the
+#      roles in feature-workspace-roles.json. The SPN is Admin because it
+#      created the workspace; connect, relate and the teardown need Admin.
+#   2. fab deploy into it with --target_env feature, the workspace name passed
+#      as a config override, so parameter.yml binds the semantic model to the
+#      new workspace's lakehouse. A git sync would leave it on dev's.
+#   3. Connect the workspace to the branch through the git connection, the
+#      workspace side winning, and commit. The branch now holds this
+#      workspace's ids, which is why parameter.yml's rules are regex.
+#   4. Relate it to the dev workspace, so the Fabric UI lists it under dev.
+#      Preview API; a refusal is a warning, not a failure.
+#
+# Prerequisites beyond post 1, see README: the git connection named in
+# variables.yml, Contributor permissions on the feature capacity for the
+# non-prod SPN, and foo-dev connected to main at fabric/foo.
+
+trigger: none
+pr: none
+
+variables:
+  - template: variables.yml
+
+jobs:
+  - job: ProvisionFeature
+    displayName: Provision feature workspace
+    pool:
+      vmImage: ubuntu-latest
+    steps:
+      # The Run dialog defaults to main. Refuse anything but feature/*, and
+      # derive the workspace name:
+      #   feature/average-amount in repo fabric-cicd
+      #   → foo-feature-fabric-cicd-average-amount
+      # The repo slug is what lets teardown prove a workspace belongs to its repo.
+      - script: |
+          set -euo pipefail
+          case "$BUILD_SOURCEBRANCH" in
+            refs/heads/feature/*) ;;
+            *)
+              echo "##vso[task.logissue type=error]provision-feature runs on feature/* only. Run pipeline, pick the branch under Branch/tag."
+              exit 1 ;;
+          esac
+          branch="${BUILD_SOURCEBRANCH#refs/heads/}"
+          slug() { printf '%s' "$1" | tr 'A-Z' 'a-z' | tr -cs 'a-z0-9' '-' | sed 's/^-//; s/-$//'; }
+          repoSlug=$(slug "$BUILD_REPOSITORY_NAME")
+          branchSlug=$(slug "${branch#feature/}")
+          echo "branch:    $branch"
+          echo "workspace: foo-feature-$repoSlug-$branchSlug"
+          echo "##vso[task.setvariable variable=branch]$branch"
+          echo "##vso[task.setvariable variable=workspace]foo-feature-$repoSlug-$branchSlug"
+        displayName: Guard feature/* and name the workspace
+
+      - checkout: self
+
+      - template: templates/fab-setup-steps.yml
+        parameters:
+          serviceConnection: ${{ variables.serviceConnectionDev }}
+
+      # ---------------------------------------------------------------------
+      # 1. Create: an empty workspace on the capacity, roles from a file
+      # ---------------------------------------------------------------------
+      - script: |
+          set -euo pipefail
+          ws="$(workspace)"
+          if wsId=$(fab get "/$ws.Workspace" -q id 2>/dev/null | tr -d '"'); then
+            echo "exists:  $ws ($wsId)"
+          else
+            fab mkdir "/$ws.Workspace" -P capacityName="$(featureCapacity)"
+            wsId=$(fab get "/$ws.Workspace" -q id | tr -d '"')
+            echo "created: $ws ($wsId)"
+          fi
+          echo "##vso[task.setvariable variable=workspaceId]$wsId"
+
+          # The humans. The SPN is already Admin: it created the workspace.
+          jq -c '.[]' .azure-pipelines/feature-workspace-roles.json |
+          while read -r assignment; do
+            fab acl set "/$ws.Workspace" \
+              -I "$(jq -r '.id' <<<"$assignment")" \
+              -R "$(jq -r '.role' <<<"$assignment")" -f
+            echo "granted: $(jq -r '.principal' <<<"$assignment") $(jq -r '.role' <<<"$assignment")"
+          done
+        displayName: Create workspace and grant roles
+
+      # ---------------------------------------------------------------------
+      # 2. Fill: the binding deploy. config.yml names no feature workspace;
+      #    the derived name rides in as a config override for this run only.
+      # ---------------------------------------------------------------------
+      - template: templates/fab-deploy-steps.yml
+        parameters:
+          targetEnv: feature
+          configOverride: '{"core":{"workspace":{"feature":"$(workspace)"}}}'
+
+      # ---------------------------------------------------------------------
+      # 3. Connect: git integration to the branch, workspace side wins, commit
+      # ---------------------------------------------------------------------
+      - script: |
+          set -euo pipefail
+          ws="$(workspace)"; wsId="$(workspaceId)"; branch="$(branch)"
+          org="$(basename "${SYSTEM_COLLECTIONURI%/}")"
+
+          # The SPN's git credential lives in a Fabric connection, by name.
+          connId=$(fab api connections | jq -r \
+            ".text.value[] | select(.displayName==\"$(gitConnection)\") | .id")
+          [ -n "$connId" ] || { echo "##vso[task.logissue type=error]git connection '$(gitConnection)' not found or not shared with the SPN"; exit 1; }
+
+          fab api -X post "workspaces/$wsId/git/connect" -i "{
+            \"gitProviderDetails\": {
+              \"gitProviderType\": \"AzureDevOps\",
+              \"organizationName\": \"$org\",
+              \"projectName\": \"$SYSTEM_TEAMPROJECT\",
+              \"repositoryName\": \"$BUILD_REPOSITORY_NAME\",
+              \"branchName\": \"$branch\",
+              \"directoryName\": \"fabric/foo\"
+            },
+            \"myGitCredentials\": { \"source\": \"ConfiguredConnection\", \"connectionId\": \"$connId\" }
+          }"
+          echo "connected: $ws → $branch (fabric/foo)"
+
+          # Both sides have content. The deploy just published the branch into
+          # the workspace, so the workspace wins and Fabric asks for a commit.
+          action=$(fab api -X post "workspaces/$wsId/git/initializeConnection" \
+            -i '{"initializationStrategy": "PreferWorkspace"}' | jq -r '.text.requiredAction')
+          case "$action" in
+            CommitToGit) ;;
+            None) echo "initialized: nothing to commit"; exit 0 ;;
+            *)
+              echo "##vso[task.logissue type=error]initialize asked for '$action': the branch holds something the deploy did not publish. Every item folder under fabric/foo must be in item_types_in_scope."
+              exit 1 ;;
+          esac
+
+          # The commit: the workspace's ids over the branch's. workspaceHead
+          # comes from the status API, and is absent before the first sync.
+          body=$(fab api "workspaces/$wsId/git/status" | jq -c \
+            '{mode: "All", comment: "Binding deploy: '"$ws"' [skip ci]"}
+             + (if .text.workspaceHead then {workspaceHead: .text.workspaceHead} else {} end)')
+          fab api -X post "workspaces/$wsId/git/commitToGit" -i "$body"
+
+          # Read-back: the commit is async, poll until the workspace head is the
+          # branch head.
+          for i in $(seq 1 30); do
+            status=$(fab api "workspaces/$wsId/git/status")
+            head=$(jq -r '.text.workspaceHead' <<<"$status")
+            remote=$(jq -r '.text.remoteCommitHash' <<<"$status")
+            if [ "$head" != "null" ] && [ "$head" = "$remote" ]; then
+              echo "committed: $branch at $head"; exit 0
+            fi
+            sleep 10
+          done
+          echo "##vso[task.logissue type=error]commit never landed on $branch"
+          exit 1
+        displayName: Connect to git and commit
+
+      # ---------------------------------------------------------------------
+      # 4. Relate: to dev, for the Fabric UI only. Preview API, warn on refusal.
+      # ---------------------------------------------------------------------
+      - script: |
+          set -euo pipefail
+          wsId="$(workspaceId)"
+          dev=$(python -c "import yaml; print(yaml.safe_load(open('fabric/foo/config.yml'))['core']['workspace']['dev'])")
+          devId=$(fab get "/$dev.Workspace" -q id | tr -d '"')
+          if fab api -X post "workspaces/$wsId/git/workspaceRelations" \
+               -i "{\"relatedWorkspaceId\": \"$devId\", \"relationType\": \"Base\"}"; then
+            echo "related: $(workspace) → $dev"
+          else
+            echo "##vso[task.logissue type=warning]could not relate $(workspace) to $dev; the workspace works without it, the UI just won't list it under dev"
+          fi
+        displayName: Relate to dev
