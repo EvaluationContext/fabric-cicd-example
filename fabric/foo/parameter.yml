@@ -23,17 +23,21 @@
 #   Pipeline → Notebook        notebookId = Load Sales.Notebook logicalId, workspaceId = zero guid
 #   Report   → Semantic model  definition.pbir byPath; fabric-cicd converts it to byConnection
 #
-# One reference has no logicalId to bind through and stays as rules below:
-# the semantic model's Direct Lake SQL endpoint host and id.
+# Two things need rules below. The semantic model's Direct Lake SQL endpoint
+# host and id have no logicalId to bind through. And the notebook's lakehouse
+# references would be fine in the repo, but the commit back from a feature
+# workspace rewrites them to that workspace's real ids, and a real guid in
+# those fields is left alone by fabric-cicd. Without the notebook rules, every
+# environment's notebook would point at a feature workspace that no longer exists.
 #
-# Both rules are `is_regex` with exactly one capture group, anchored on the
+# Every rule is `is_regex` with exactly one capture group, anchored on the
 # STRUCTURE around the value rather than on the committed value. The literals
-# in expressions.tmdl change on every feature branch: the binding deploy
-# commits the feature workspace's endpoint back to the branch, and the merge
-# carries it to main. A find_value matched on dev's literal would stop
-# matching after the first merge; anchored on Sql.Database(...) it matches
-# whatever the last commit left there. Only the captured group is replaced.
-# A malformed pattern rejects the whole file.
+# change on every feature branch: the binding deploy commits the feature
+# workspace's ids back to the branch, and the merge carries them to main. A
+# find_value matched on dev's literal would stop matching after the first
+# merge; anchored on the surrounding structure it matches whatever the last
+# commit left there. Only the captured group is replaced. A malformed pattern
+# rejects the whole file.
 #
 # `_ALL_` covers the feature environment too. A rule with a per-environment
 # replace_value needs a `feature` key, or it skips the file with a warning.
@@ -61,3 +65,33 @@ find_replace:
     item_type: "SemanticModel"
     item_name: "Sales"
     file_path: "/Sales.SemanticModel/definition/expressions.tmdl"
+
+  # ---- Notebook → Lakehouse, after a commit back ------------------------------
+  # The notebook's # META block holds the default lakehouse, its workspace and
+  # the known lakehouses. Fabric writes real ids there on the commit back, so
+  # all three are rebound to the workspace being deployed to. The default
+  # lakehouse is a lakehouse in the target workspace, whichever one it is.
+
+  - find_value: '# META\s+"default_lakehouse":\s*"([0-9a-fA-F-]{36})"'
+    is_regex: "true"
+    replace_value:
+      _ALL_: "$items.Lakehouse.Sales.$id"
+    item_type: "Notebook"
+    item_name: "Load Sales"
+    file_path: "/Load Sales.Notebook/notebook-content.py"
+
+  - find_value: '# META\s+"default_lakehouse_workspace_id":\s*"([0-9a-fA-F-]{36})"'
+    is_regex: "true"
+    replace_value:
+      _ALL_: "$workspace.$id"
+    item_type: "Notebook"
+    item_name: "Load Sales"
+    file_path: "/Load Sales.Notebook/notebook-content.py"
+
+  - find_value: '"known_lakehouses":\s*\[\s*# META\s+\{\s*# META\s+"id":\s*"([0-9a-fA-F-]{36})"'
+    is_regex: "true"
+    replace_value:
+      _ALL_: "$items.Lakehouse.Sales.$id"
+    item_type: "Notebook"
+    item_name: "Load Sales"
+    file_path: "/Load Sales.Notebook/notebook-content.py"
