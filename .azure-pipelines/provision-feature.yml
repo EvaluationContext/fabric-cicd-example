@@ -111,18 +111,25 @@ jobs:
             ".text.value[] | select(.displayName==\"$(gitConnection)\") | .id")
           [ -n "$connId" ] || { echo "##vso[task.logissue type=error]git connection '$(gitConnection)' not found or not shared with the SPN"; exit 1; }
 
-          fab api -X post "workspaces/$wsId/git/connect" -i "{
-            \"gitProviderDetails\": {
-              \"gitProviderType\": \"AzureDevOps\",
-              \"organizationName\": \"$org\",
-              \"projectName\": \"$SYSTEM_TEAMPROJECT\",
-              \"repositoryName\": \"$BUILD_REPOSITORY_NAME\",
-              \"branchName\": \"$branch\",
-              \"directoryName\": \"fabric/foo\"
-            },
-            \"myGitCredentials\": { \"source\": \"ConfiguredConnection\", \"connectionId\": \"$connId\" }
-          }"
-          echo "connected: $ws → $branch (fabric/foo)"
+          # A re-run finds the workspace already connected, so connect only when it is not.
+          state=$(fab api "workspaces/$wsId/git/connection" | jq -r '.text.gitConnectionState')
+          if [ "$state" = "NotConnected" ]; then
+            fab api -X post "workspaces/$wsId/git/connect" -i "{
+              \"gitProviderDetails\": {
+                \"gitProviderType\": \"AzureDevOps\",
+                \"organizationName\": \"$org\",
+                \"projectName\": \"$SYSTEM_TEAMPROJECT\",
+                \"repositoryName\": \"$BUILD_REPOSITORY_NAME\",
+                \"branchName\": \"$branch\",
+                \"directoryName\": \"fabric/foo\"
+              },
+              \"myGitCredentials\": { \"source\": \"ConfiguredConnection\", \"connectionId\": \"$connId\" }
+            }"
+            echo "connected: $ws → $branch (fabric/foo)"
+          fi
+          state=$(fab api "workspaces/$wsId/git/connection" | jq -r '.text.gitConnectionState')
+          [ "$state" != "NotConnected" ] || { echo "##vso[task.logissue type=error]could not connect $ws to $branch"; exit 1; }
+          [ "$state" != "ConnectedAndInitialized" ] || { echo "initialized: $ws is already in sync, nothing to commit"; exit 0; }
 
           # Both sides have content. The deploy just published the branch into
           # the workspace, so the workspace wins and Fabric asks for a commit.
