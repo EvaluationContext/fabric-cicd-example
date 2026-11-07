@@ -69,6 +69,8 @@ stages:
   - stage: Teardown
     displayName: Teardown feature workspaces
     dependsOn: Dev
+    # Only a run on main may delete anything.
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
     jobs:
       - job: TeardownFeatureWorkspaces
         displayName: Delete workspaces for merged branches
@@ -85,28 +87,46 @@ stages:
           - script: |
               set -euo pipefail
               slug() { printf '%s' "$1" | tr 'A-Z' 'a-z' | tr -cs 'a-z0-9' '-' | sed 's/^-//; s/-$//'; }
-              prefix="foo-feature-$(slug "$BUILD_REPOSITORY_NAME")-"
+              # If in doubt, keep. A workspace is deleted only when every check below
+              # passes; a failed check, an odd name or a failed git call keeps it.
+              repo="$BUILD_REPOSITORY_NAME"
+              prefix="foo-feature-$(slug "$repo")-"
+
+              # Delete nothing unless the remote answers and still has main, so an
+              # unreachable remote can never read as "every branch is gone".
+              git ls-remote --exit-code --heads origin refs/heads/main >/dev/null
 
               # Only workspaces the SPN holds a role on come back, which is
               # why provisioning kept it Admin. Delete is Admin-only too.
-              # The name prefix is the cheap filter: this repo's feature workspaces.
               fab api workspaces |
                 jq -r --arg p "$prefix" '.text.value[]
-                  | select(.displayName | startswith($p)) | .id' |
-              while read -r wsId; do
-                # The git connection is the exact check: the repo and branch the
-                # workspace is really connected to. Two repos with overlapping
-                # slugs can share a prefix, but not a repository name.
-                conn=$(fab api "workspaces/$wsId/git/connection")
-                repo=$(jq -r '.text.gitProviderDetails.repositoryName // empty' <<<"$conn")
+                  | select(.displayName | startswith($p)) | [.id, .displayName] | @tsv' |
+              while IFS=$'\t' read -r wsId wsName; do
+                conn=$(fab api "workspaces/$wsId/git/connection" </dev/null)
+                connRepo=$(jq -r '.text.gitProviderDetails.repositoryName // empty' <<<"$conn")
                 branch=$(jq -r '.text.gitProviderDetails.branchName // empty' <<<"$conn")
-                if [ "$repo" != "$BUILD_REPOSITORY_NAME" ] || [ -z "$branch" ]; then
-                  echo "keep:   $wsId (not connected to $BUILD_REPOSITORY_NAME)"
-                elif git ls-remote --exit-code --heads origin "$branch" >/dev/null; then
-                  echo "keep:   $wsId ($branch still exists)"
-                else
-                  echo "delete: $wsId ($branch is gone)"
-                  fab api -X delete "workspaces/$wsId"
+
+                # Every check must pass, or the workspace is kept.
+                if [ "$connRepo" != "$repo" ]; then
+                  echo "keep:   $wsName (connected to '$connRepo', not $repo)"; continue
                 fi
+                case "$branch" in
+                  feature/?*) ;;
+                  *) echo "keep:   $wsName ('$branch' is not a feature branch)"; continue ;;
+                esac
+                if [ "$wsName" != "$prefix$(slug "${branch#feature/}")" ]; then
+                  echo "keep:   $wsName (not the workspace provisioned for $branch)"; continue
+                fi
+
+                # ls-remote exits 0 when the branch exists and 2 when it does not. Any
+                # other code means the check failed, which is not an answer.
+                rc=0
+                git ls-remote --exit-code --heads origin "refs/heads/$branch" </dev/null >/dev/null || rc=$?
+                case "$rc" in
+                  0) echo "keep:   $wsName ($branch still exists)" ;;
+                  2) echo "delete: $wsName ($branch is gone)"
+                     fab api -X delete "workspaces/$wsId" </dev/null ;;
+                  *) echo "##vso[task.logissue type=warning]kept $wsName: could not check $branch (git exit $rc)" ;;
+                esac
               done
             displayName: Teardown
